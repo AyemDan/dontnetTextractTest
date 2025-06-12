@@ -1,51 +1,42 @@
-﻿using Amazon.Textract;
-using Amazon.Textract.Model;
+﻿using Amazon.S3;
+using Amazon.Textract;
 using TextractTest.Core.Services;
-using TextractTest.Core.Models;
 
-class Program
+try
 {
-    static async Task Main(string[] args)
+    if (args.Length == 0)
     {
-        if (args.Length < 1)
-        {
-            Console.WriteLine("Usage: dotnet run <document_name> [output_directory]");
-            Console.WriteLine("Example: dotnet run document.pdf ./output");
-            return;
-        }
-
-        var document = args[0];
-        var outputDirectory = args.Length > 1 ? args[1] : null;
-        var bucketName = Environment.GetEnvironmentVariable("INPUT_BUCKET_NAME");
-        var region = Environment.GetEnvironmentVariable("AWS_REGION");
-
-        if (string.IsNullOrEmpty(bucketName))
-        {
-            Console.WriteLine("Error: INPUT_BUCKET_NAME environment variable is not set");
-            Console.WriteLine("Please set the following environment variables:");
-            Console.WriteLine("  - INPUT_BUCKET_NAME: The name of your S3 bucket");
-            Console.WriteLine("  - AWS_REGION: (Optional) The AWS region (defaults to eu-central-1)");
-            Console.WriteLine("\nNote: AWS credentials will be loaded from your AWS CLI profile");
-            return;
-        }
-
-        try
-        {
-            // Initialize processor with configuration
-            var processor = new DocumentProcessor(
-                bucket: bucketName,
-                document: document,
-                region: region,
-                outputDirectory: outputDirectory
-            );
-
-            // Process document with Analysis type
-            await processor.ProcessDocumentAsync(ProcessType.Analysis);
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Error: {ex.Message}");
-            Environment.Exit(1);
-        }
+        Console.WriteLine("Please provide a document name");
+        return;
     }
+
+    var documentName = args[0];
+    var forceReprocess = args.Length > 1 && args[1] == "--force";
+
+    // Initialize AWS clients
+    var s3Client = new AmazonS3Client();
+    var textractClient = new AmazonTextractClient();
+    
+    // Get bucket name from environment variable
+    var bucketName = Environment.GetEnvironmentVariable("TEXTRACT_BUCKET_NAME");
+    if (string.IsNullOrEmpty(bucketName))
+    {
+        Console.WriteLine("Please set the TEXTRACT_BUCKET_NAME environment variable");
+        return;
+    }
+
+    Console.WriteLine($"Using bucket: {bucketName}");
+    Console.WriteLine($"Document name: {documentName}");
+
+    // Process document
+    var processor = new DocumentProcessor(s3Client, textractClient, bucketName);
+    var jobId = await processor.ProcessDocument(documentName);
+    
+    Console.WriteLine($"Started Textract job: {jobId}");
+    Console.WriteLine("Use the JobChecker project to check the job status and extract results");
+}
+catch (Exception ex)
+{
+    Console.WriteLine($"Error: {ex.Message}");
+    Environment.Exit(1);
 }

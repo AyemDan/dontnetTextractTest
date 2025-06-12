@@ -1,46 +1,73 @@
-﻿using Amazon;
-using Amazon.Runtime;
-using Amazon.Runtime.CredentialManagement;
-using Amazon.Textract;
-using TextractTest.JobChecker.Services;
+﻿using Amazon.Textract;
+using TextractTest.Core.Services;
 
-class Program
+var jobId = args.Length > 0 ? args[0] : null;
+
+if (string.IsNullOrEmpty(jobId))
 {
-    static async Task Main(string[] args)
+    Console.WriteLine("Please provide a job ID as a command line argument.");
+    return;
+}
+
+var textractClient = new AmazonTextractClient();
+var jobTracker = new JobTracker(Directory.GetCurrentDirectory());
+var jobStatusChecker = new JobStatusChecker(textractClient);
+var tableProcessor = new TextractTableProcessor();
+
+try
+{
+    // Get job info
+    var job = jobTracker.GetJob(jobId);
+    if (job == null)
     {
-        if (args.Length != 1)
-        {
-            Console.WriteLine("Usage: dotnet run <job_id>");
-            Console.WriteLine("Example: dotnet run 1234567890");
-            return;
-        }
-
-        var jobId = args[0];
-        var region = Environment.GetEnvironmentVariable("AWS_REGION") ?? "eu-central-1";
-
-        try
-        {
-            // Initialize AWS credentials from profile
-            var chain = new CredentialProfileStoreChain();
-            AWSCredentials awsCredentials;
-
-            if (!chain.TryGetAWSCredentials(Environment.GetEnvironmentVariable("AWS_PROFILE") ?? "default", out awsCredentials))
-            {
-                throw new Exception("Failed to load AWS credentials from profile. Please ensure you're logged in with 'aws sso login'");
-            }
-
-            // Initialize AWS Textract client
-            var textractClient = new AmazonTextractClient(awsCredentials, RegionEndpoint.GetBySystemName(region));
-            var checker = new JobStatusChecker(textractClient);
-
-            // Wait for job completion
-            var status = await checker.WaitForJobCompletionAsync(jobId);
-            Console.WriteLine($"Final job status: {status}");
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Error: {ex.Message}");
-            Environment.Exit(1);
-        }
+        Console.WriteLine($"No job found with ID: {jobId}");
+        return;
     }
+
+    // Check if output file already exists
+    var documentsPath = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+    var outputDir = Path.Combine(documentsPath, "TextractOutput");
+    var expectedOutputFile = Path.Combine(outputDir, $"{job.DocumentName}_{jobId}.json");
+
+    if (File.Exists(expectedOutputFile))
+    {
+        Console.WriteLine($"Output file already exists at: {expectedOutputFile}");
+        Console.WriteLine("No need to process the job again.");
+        return;
+    }
+
+    Console.WriteLine($"Checking status for job: {jobId}");
+    Console.WriteLine($"Document: {job.DocumentName}");
+    Console.WriteLine($"Current status: {job.Status}");
+
+    // Check job status
+    var status = await jobStatusChecker.WaitForJobCompletionAsync(jobId);
+    
+    // Update status in tracker
+    jobTracker.UpdateJobStatus(jobId, status);
+    
+    Console.WriteLine($"Job status: {status}");
+
+    if (status == "SUCCEEDED")
+    {
+        Console.WriteLine("Job completed successfully. Processing results...");
+        
+        // Extract tables from the document
+        await tableProcessor.ExtractFromJobId(textractClient, jobId);
+        var tables = tableProcessor.ExtractTablesFromBlocks();
+        
+        // Format the data
+        var bankData = tableProcessor.FormatBankStatementData(tables);
+        
+        // Save results
+        tableProcessor.SaveResults(bankData, expectedOutputFile);
+    }
+    else if (status == "FAILED")
+    {
+        Console.WriteLine("Job failed. Please check AWS Console for more details.");
+    }
+}
+catch (Exception ex)
+{
+    Console.WriteLine($"Error checking job status: {ex.Message}");
 }

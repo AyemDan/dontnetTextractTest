@@ -17,6 +17,7 @@ This solution processes documents using AWS Textract to extract tables and form 
 ## Configuration
 
 Set the following environment variables:
+
 - `INPUT_BUCKET_NAME`: S3 bucket containing input documents
 - `AWS_REGION`: AWS region (defaults to eu-central-1)
 - `AWS_PROFILE`: AWS CLI profile name (e.g., "ayem")
@@ -24,12 +25,14 @@ Set the following environment variables:
 ## Usage
 
 1. Process a document:
+
 ```bash
 cd src/TextractTest.Core
 dotnet run <document_name> [output_directory]
 ```
 
 2. Check job status:
+
 ```bash
 cd src/TextractTest.JobChecker
 dotnet run <job_id>
@@ -38,10 +41,12 @@ dotnet run <job_id>
 ## Output
 
 The processor generates JSON files containing:
+
 - Summary information (account details, balances)
 - Transaction details (date, reference, description, amounts)
 
 Output files are saved in the format:
+
 ```
 [document_name]_[job_id]_[timestamp].json
-``` 
+```

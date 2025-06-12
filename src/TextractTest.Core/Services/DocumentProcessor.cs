@@ -2,203 +2,142 @@ using Amazon;
 using Amazon.Runtime;
 using Amazon.Runtime.CredentialManagement;
 using Amazon.S3;
+using Amazon.S3.Model;
 using Amazon.Textract;
 using Amazon.Textract.Model;
 using TextractTest.Core.Models;
-using TextractTest.JobChecker.Services;
+using TextractTest.Core.Services;
 
 namespace TextractTest.Core.Services;
 
 public class DocumentProcessor
 {
-    private readonly string _bucket;
-    private readonly string _document;
-    private readonly string _regionName;
-    private readonly IAmazonTextract _textract;
-    private readonly IAmazonS3 _s3;
-    private readonly JobTracker _tracker;
-    private string _jobId = string.Empty;
-    private readonly string _outputDirectory;
+    private readonly IAmazonS3 _s3Client;
+    private readonly IAmazonTextract _textractClient;
+    private readonly JobTracker _jobTracker;
+    private readonly string _bucketName;
+    private readonly TextractTableProcessor _tableProcessor;
 
-    public DocumentProcessor(string bucket, string document, string? region = null, string? outputDirectory = null)
+    public DocumentProcessor(
+        IAmazonS3 s3Client,
+        IAmazonTextract textractClient,
+        string bucketName)
     {
-        _bucket = bucket;
-        _document = document;
-        _regionName = region ?? Environment.GetEnvironmentVariable("AWS_REGION") ?? "eu-central-1";
-        _outputDirectory = outputDirectory ?? Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "output");
-
-        // Create output directory if it doesn't exist
-        if (!Directory.Exists(_outputDirectory))
-        {
-            Directory.CreateDirectory(_outputDirectory);
-        }
-
-        // Initialize AWS clients using AWS CLI credentials
-        var regionEndpoint = RegionEndpoint.GetBySystemName(_regionName);
-        var chain = new CredentialProfileStoreChain();
-        AWSCredentials awsCredentials;
-
-        if (!chain.TryGetAWSCredentials(Environment.GetEnvironmentVariable("AWS_PROFILE") ?? "default", out awsCredentials))
-        {
-            throw new Exception("Failed to load AWS credentials from profile. Please ensure you're logged in with 'aws sso login'");
-        }
-
-        _s3 = new AmazonS3Client(awsCredentials, regionEndpoint);
-        _textract = new AmazonTextractClient(awsCredentials, regionEndpoint);
-        _tracker = new JobTracker();
+        _s3Client = s3Client;
+        _textractClient = textractClient;
+        _bucketName = bucketName;
+        _tableProcessor = new TextractTableProcessor();
+        
+        // Initialize JobTracker with the current directory
+        _jobTracker = new JobTracker(Directory.GetCurrentDirectory());
     }
 
-    public async Task ProcessDocumentAsync(ProcessType type)
+    public async Task<string> ProcessDocument(string documentName)
     {
-        Console.WriteLine($"Using bucket: {_bucket}");
-        Console.WriteLine($"Document name: {_document}");
-        Console.WriteLine($"Output directory: {_outputDirectory}");
-
         try
         {
-            // Verify the document exists in S3
-            await _s3.GetObjectMetadataAsync(_bucket, _document);
-            Console.WriteLine($"Document exists in S3: {_document}");
-
-            // Start appropriate processing type
-            if (type == ProcessType.Detection)
+            // Check if document exists in S3
+            var exists = await DocumentExistsInS3(documentName);
+            if (!exists)
             {
-                var response = await _textract.StartDocumentTextDetectionAsync(new StartDocumentTextDetectionRequest
-                {
-                    DocumentLocation = new DocumentLocation
-                    {
-                        S3Object = new Amazon.Textract.Model.S3Object
-                        {
-                            Bucket = _bucket,
-                            Name = _document
-                        }
-                    }
-                });
-
-                _jobId = response.JobId;
-                Console.WriteLine("Processing type: Detection");
+                throw new Exception($"Document {documentName} not found in bucket {_bucketName}");
             }
-            else if (type == ProcessType.Analysis)
-            {
-                var response = await _textract.StartDocumentAnalysisAsync(new StartDocumentAnalysisRequest
-                {
-                    DocumentLocation = new DocumentLocation
-                    {
-                        S3Object = new Amazon.Textract.Model.S3Object
-                        {
-                            Bucket = _bucket,
-                            Name = _document
-                        }
-                    },
-                    FeatureTypes = new List<string> { "TABLES", "FORMS" }
-                });
 
-                _jobId = response.JobId;
-                Console.WriteLine("Processing type: Analysis");
+            // Check for existing job
+            var existingJob = _jobTracker.GetJobByDocument(documentName);
+            if (existingJob != null)
+            {
+                // Check if we already have output for this job
+                var documentsPath = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+                var outputDir = Path.Combine(documentsPath, "TextractOutput");
+                
+                if (Directory.Exists(outputDir))
+                {
+                    // Look for any file matching the pattern documentName_jobId-*.json
+                    var existingFiles = Directory.GetFiles(outputDir, $"{documentName}_{existingJob.JobId}-*.json");
+                    if (existingFiles.Length > 0)
+                    {
+                        Console.WriteLine($"Document {documentName} has already been processed.");
+                        Console.WriteLine($"Output file exists at: {existingFiles[0]}");
+                        return existingJob.JobId;
+                    }
+                }
+            }
+
+            // Start Textract job
+            var jobId = await StartTextractJob(documentName);
+            
+            // Save job info
+            _jobTracker.AddJob(jobId, documentName, _bucketName);
+
+            // Wait for job completion and process results immediately
+            var jobStatusChecker = new JobStatusChecker(_textractClient);
+            var status = await jobStatusChecker.WaitForJobCompletionAsync(jobId);
+            
+            if (status == "SUCCEEDED")
+            {
+                Console.WriteLine("Job completed successfully. Processing results...");
+                
+                // Extract tables from the document
+                await _tableProcessor.ExtractFromJobId(_textractClient, jobId);
+                var tables = _tableProcessor.ExtractTablesFromBlocks();
+                
+                // Format the data
+                var bankData = _tableProcessor.FormatBankStatementData(tables);
+                
+                // Save results
+                var documentsPath = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+                var outputDir = Path.Combine(documentsPath, "TextractOutput");
+                Directory.CreateDirectory(outputDir);
+                var timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+                var outputFile = Path.Combine(outputDir, $"{documentName}_{jobId}-{timestamp}.json");
+                
+                _tableProcessor.SaveResults(bankData, outputFile);
             }
             else
             {
-                throw new ArgumentException("Invalid processing type. Choose Detection or Analysis.");
+                Console.WriteLine($"Job failed with status: {status}");
             }
 
-            Console.WriteLine($"Started Job Id: {_jobId}");
-            _tracker.AddJob(_jobId, _document);
-
-            // Poll for job completion
-            Console.WriteLine("Waiting for job completion...");
-            var checker = new JobStatusChecker(_textract);
-            var status = await checker.WaitForJobCompletionAsync(_jobId);
-
-            if (status == "SUCCEEDED")
-            {
-                await GetResultsAsync(_jobId);
-            }
-
-            Console.WriteLine("Done!");
+            return jobId;
         }
-        catch (Exception e)
+        catch (Exception ex)
         {
-            Console.WriteLine($"Error in document processing: {e}");
-            if (!string.IsNullOrEmpty(_jobId))
-            {
-                _tracker.UpdateJobStatus(_jobId, "FAILED");
-            }
+            throw new Exception($"Error processing document: {ex.Message}", ex);
+        }
+    }
+
+    private async Task<bool> DocumentExistsInS3(string documentName)
+    {
+        try
+        {
+            var response = await _s3Client.GetObjectMetadataAsync(_bucketName, documentName);
+            return true;
+        }
+        catch (Amazon.S3.AmazonS3Exception ex)
+        {
+            if (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
+                return false;
             throw;
         }
     }
 
-    private async Task GetResultsAsync(string jobId)
+    private async Task<string> StartTextractJob(string documentName)
     {
-        const int maxResults = 1000;
-        string? paginationToken = null;
-        var finished = false;
-        var allBlocks = new List<Block>();
-
-        while (!finished)
+        var request = new StartDocumentAnalysisRequest
         {
-            GetDocumentAnalysisResponse response;
-            if (paginationToken != null)
+            DocumentLocation = new DocumentLocation
             {
-                response = await _textract.GetDocumentAnalysisAsync(new GetDocumentAnalysisRequest
+                S3Object = new Amazon.Textract.Model.S3Object
                 {
-                    JobId = jobId,
-                    MaxResults = maxResults,
-                    NextToken = paginationToken
-                });
-            }
-            else
-            {
-                response = await _textract.GetDocumentAnalysisAsync(new GetDocumentAnalysisRequest
-                {
-                    JobId = jobId,
-                    MaxResults = maxResults
-                });
-            }
-
-            // Add blocks to our collection
-            allBlocks.AddRange(response.Blocks);
-            Console.WriteLine($"Processing page {response.Blocks.Count} blocks");
-
-            // Debug logging
-            foreach (var block in response.Blocks)
-            {
-                if (block.BlockType == "TABLE")
-                {
-                    Console.WriteLine($"\nFound TABLE block with {block.Relationships?.FirstOrDefault(r => r.Type == "CHILD")?.Ids.Count ?? 0} cells");
+                    Bucket = _bucketName,
+                    Name = documentName
                 }
-                else if (block.BlockType == "CELL")
-                {
-                    var text = block.Relationships?.FirstOrDefault(r => r.Type == "CHILD")?.Ids
-                        .Select(id => allBlocks.FirstOrDefault(b => b.Id == id))
-                        .Where(b => b?.BlockType == "WORD")
-                        .Select(b => b.Text)
-                        .FirstOrDefault() ?? "";
+            },
+            FeatureTypes = new List<string> { "TABLES" }
+        };
 
-                    if (!string.IsNullOrEmpty(text))
-                    {
-                        Console.WriteLine($"Cell at Row {block.RowIndex}, Col {block.ColumnIndex}: {text}");
-                    }
-                }
-            }
-
-            paginationToken = response.NextToken;
-            finished = string.IsNullOrEmpty(paginationToken);
-        }
-
-        // Process all blocks using TextractTableProcessor
-        var processor = new TextractTableProcessor(allBlocks);
-        var tables = processor.ExtractTablesFromBlocks();
-        Console.WriteLine($"Found {tables.Count} tables");
-
-        Console.WriteLine("Formatting bank statement data...");
-        var data = processor.FormatBankStatementData(tables);
-
-        // Save results with job ID and document name in the filename
-        var timestamp = DateTime.UtcNow.ToString("yyyyMMdd_HHmmss");
-        var safeDocName = Path.GetFileNameWithoutExtension(_document).Replace(" ", "_");
-        var outputFile = Path.Combine(_outputDirectory, $"{safeDocName}_{jobId}_{timestamp}.json");
-        
-        processor.SaveResults(data, outputFile);
-        _tracker.UpdateJobStatus(jobId, "COMPLETED");
+        var response = await _textractClient.StartDocumentAnalysisAsync(request);
+        return response.JobId;
     }
 } 

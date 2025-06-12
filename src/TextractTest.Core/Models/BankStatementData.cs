@@ -9,4 +9,43 @@ public class BankStatementData
 
     [JsonPropertyName("transactions")]
     public List<Dictionary<string, string>> Transactions { get; set; } = new();
+}
+
+public class AccountInfo
+{
+    [JsonPropertyName("accountNumber")]
+    public string AccountNumber { get; set; } = string.Empty;
+
+    [JsonPropertyName("accountName")]
+    public string AccountName { get; set; } = string.Empty;
+
+    [JsonPropertyName("bankName")]
+    public string BankName { get; set; } = string.Empty;
+
+    [JsonPropertyName("currency")]
+    public string Currency { get; set; } = string.Empty;
+
+    [JsonPropertyName("branch")]
+    public string Branch { get; set; } = string.Empty;
+}
+
+public class StatementSummary
+{
+    [JsonPropertyName("statementPeriod")]
+    public string StatementPeriod { get; set; } = string.Empty;
+
+    [JsonPropertyName("openingBalance")]
+    public decimal OpeningBalance { get; set; }
+
+    [JsonPropertyName("closingBalance")]
+    public decimal ClosingBalance { get; set; }
+
+    [JsonPropertyName("totalDeposits")]
+    public decimal TotalDeposits { get; set; }
+
+    [JsonPropertyName("totalWithdrawals")]
+    public decimal TotalWithdrawals { get; set; }
+
+    [JsonPropertyName("totalTransactions")]
+    public int TotalTransactions { get; set; }
 } 
