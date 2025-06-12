@@ -2,7 +2,7 @@
 using Amazon.Runtime;
 using Amazon.Runtime.CredentialManagement;
 using Amazon.Textract;
-using TextractTest.Shared.Services;
+using TextractTest.JobChecker.Services;
 
 class Program
 {

@@ -1,4 +1,4 @@
-namespace TextractTest.Shared.Services;
+namespace TextractTest.JobChecker.Services;
 
 public class JobTracker
 {

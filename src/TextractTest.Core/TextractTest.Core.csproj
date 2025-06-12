@@ -8,15 +8,15 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="AWSSDK.Core" Version="3.7.300.1" />
-    <PackageReference Include="AWSSDK.S3" Version="3.7.300.1" />
-    <PackageReference Include="AWSSDK.SSO" Version="3.7.300.1" />
-    <PackageReference Include="AWSSDK.SSOOIDC" Version="3.7.300.1" />
-    <PackageReference Include="AWSSDK.Textract" Version="3.7.300.1" />
+    <PackageReference Include="AWSSDK.Core" Version="3.7.302.14" />
+    <PackageReference Include="AWSSDK.S3" Version="3.7.305.29" />
+    <PackageReference Include="AWSSDK.SSO" Version="3.7.300.47" />
+    <PackageReference Include="AWSSDK.SSOOIDC" Version="3.7.300.47" />
+    <PackageReference Include="AWSSDK.Textract" Version="3.7.300.47" />
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\TextractTest.Shared\TextractTest.Shared.csproj" />
+    <ProjectReference Include="..\TextractTest.JobChecker\TextractTest.JobChecker.csproj" />
   </ItemGroup>
 
 </Project> 

@@ -1,7 +1,7 @@
 ﻿using Amazon.Textract;
 using Amazon.Textract.Model;
 using TextractTest.Core.Services;
-using TextractTest.Shared.Models;
+using TextractTest.Core.Models;
 
 class Program
 {

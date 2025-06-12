@@ -1,4 +1,4 @@
-namespace TextractTest.Shared.Models;
+namespace TextractTest.Core.Models;
 
 public enum ProcessType
 {

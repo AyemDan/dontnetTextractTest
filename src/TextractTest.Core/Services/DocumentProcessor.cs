@@ -4,9 +4,8 @@ using Amazon.Runtime.CredentialManagement;
 using Amazon.S3;
 using Amazon.Textract;
 using Amazon.Textract.Model;
-using TextractTest.Core.Services;
-using TextractTest.Shared.Models;
-using TextractTest.Shared.Services;
+using TextractTest.Core.Models;
+using TextractTest.JobChecker.Services;
 
 namespace TextractTest.Core.Services;
 

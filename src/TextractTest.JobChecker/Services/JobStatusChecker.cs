@@ -1,7 +1,7 @@
 using Amazon.Textract;
 using Amazon.Textract.Model;
 
-namespace TextractTest.Shared.Services;
+namespace TextractTest.JobChecker.Services;
 
 public class JobStatusChecker
 {
