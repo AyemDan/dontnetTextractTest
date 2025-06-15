@@ -10,7 +10,7 @@ if (string.IsNullOrEmpty(jobId))
 }
 
 var textractClient = new AmazonTextractClient();
-var jobTracker = new JobTracker(Directory.GetCurrentDirectory());
+var jobTracker = new JobTracker();
 var jobStatusChecker = new JobStatusChecker(textractClient);
 var tableProcessor = new TextractTableProcessor();
 
@@ -42,23 +42,23 @@ try
 
     // Check job status
     var status = await jobStatusChecker.WaitForJobCompletionAsync(jobId);
-    
+
     // Update status in tracker
     jobTracker.UpdateJobStatus(jobId, status);
-    
+
     Console.WriteLine($"Job status: {status}");
 
     if (status == "SUCCEEDED")
     {
         Console.WriteLine("Job completed successfully. Processing results...");
-        
+
         // Extract tables from the document
         await tableProcessor.ExtractFromJobId(textractClient, jobId);
         var tables = tableProcessor.ExtractTablesFromBlocks();
-        
+
         // Format the data
         var bankData = tableProcessor.FormatBankStatementData(tables);
-        
+
         // Save results
         tableProcessor.SaveResults(bankData, expectedOutputFile);
     }

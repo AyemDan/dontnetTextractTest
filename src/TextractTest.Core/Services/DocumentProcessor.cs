@@ -1,12 +1,6 @@
-using Amazon;
-using Amazon.Runtime;
-using Amazon.Runtime.CredentialManagement;
 using Amazon.S3;
-using Amazon.S3.Model;
 using Amazon.Textract;
 using Amazon.Textract.Model;
-using TextractTest.Core.Models;
-using TextractTest.Core.Services;
 
 namespace TextractTest.Core.Services;
 
@@ -27,9 +21,9 @@ public class DocumentProcessor
         _textractClient = textractClient;
         _bucketName = bucketName;
         _tableProcessor = new TextractTableProcessor();
-        
+
         // Initialize JobTracker with the current directory
-        _jobTracker = new JobTracker(Directory.GetCurrentDirectory());
+        _jobTracker = new JobTracker();
     }
 
     public async Task<string> ProcessDocument(string documentName)
@@ -50,7 +44,7 @@ public class DocumentProcessor
                 // Check if we already have output for this job
                 var documentsPath = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
                 var outputDir = Path.Combine(documentsPath, "TextractOutput");
-                
+
                 if (Directory.Exists(outputDir))
                 {
                     // Look for any file matching the pattern documentName_jobId-*.json
@@ -66,32 +60,32 @@ public class DocumentProcessor
 
             // Start Textract job
             var jobId = await StartTextractJob(documentName);
-            
+
             // Save job info
             _jobTracker.AddJob(jobId, documentName, _bucketName);
 
             // Wait for job completion and process results immediately
             var jobStatusChecker = new JobStatusChecker(_textractClient);
             var status = await jobStatusChecker.WaitForJobCompletionAsync(jobId);
-            
+
             if (status == "SUCCEEDED")
             {
                 Console.WriteLine("Job completed successfully. Processing results...");
-                
+
                 // Extract tables from the document
                 await _tableProcessor.ExtractFromJobId(_textractClient, jobId);
                 var tables = _tableProcessor.ExtractTablesFromBlocks();
-                
+
                 // Format the data
                 var bankData = _tableProcessor.FormatBankStatementData(tables);
-                
+
                 // Save results
                 var documentsPath = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
                 var outputDir = Path.Combine(documentsPath, "TextractOutput");
                 Directory.CreateDirectory(outputDir);
                 var timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
                 var outputFile = Path.Combine(outputDir, $"{documentName}_{jobId}-{timestamp}.json");
-                
+
                 _tableProcessor.SaveResults(bankData, outputFile);
             }
             else
@@ -140,4 +134,4 @@ public class DocumentProcessor
         var response = await _textractClient.StartDocumentAnalysisAsync(request);
         return response.JobId;
     }
-} 
+}

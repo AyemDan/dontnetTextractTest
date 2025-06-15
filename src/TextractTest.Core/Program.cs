@@ -16,7 +16,7 @@ try
     // Initialize AWS clients
     var s3Client = new AmazonS3Client();
     var textractClient = new AmazonTextractClient();
-    
+
     // Get bucket name from environment variable
     var bucketName = Environment.GetEnvironmentVariable("TEXTRACT_BUCKET_NAME");
     if (string.IsNullOrEmpty(bucketName))
@@ -31,7 +31,7 @@ try
     // Process document
     var processor = new DocumentProcessor(s3Client, textractClient, bucketName);
     var jobId = await processor.ProcessDocument(documentName);
-    
+
     Console.WriteLine($"Started Textract job: {jobId}");
     Console.WriteLine("Use the JobChecker project to check the job status and extract results");
 }

@@ -7,7 +7,7 @@ public class JobTracker
     private readonly string _jobsFile;
     private List<JobInfo> _jobs;
 
-    public JobTracker(string baseDirectory)
+    public JobTracker()
     {
         // Use the current working directory for jobs.json
         _jobsFile = Path.Combine(Directory.GetCurrentDirectory(), "jobs.json");
@@ -121,4 +121,4 @@ public class JobInfo
     public string Status { get; set; } = "";
     public DateTime CreatedAt { get; set; }
     public DateTime? UpdatedAt { get; set; }
-} 
+}

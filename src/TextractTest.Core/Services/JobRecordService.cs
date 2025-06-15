@@ -69,9 +69,9 @@ public class JobRecordService
 
     public bool HasBeenProcessed(string documentName)
     {
-        return _jobRecords.Any(r => 
-            r.DocumentName == documentName && 
-            r.Status == "COMPLETED" && 
+        return _jobRecords.Any(r =>
+            r.DocumentName == documentName &&
+            r.Status == "COMPLETED" &&
             File.Exists(r.OutputFile));
     }
 
@@ -79,4 +79,4 @@ public class JobRecordService
     {
         return _jobRecords.ToList();
     }
-} 
+}

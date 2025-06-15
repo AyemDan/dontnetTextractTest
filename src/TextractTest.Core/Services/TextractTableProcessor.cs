@@ -1,8 +1,6 @@
-using System.Text.Json;
-using System.Text.RegularExpressions;
-using System.Text.Json.Serialization;
 using Amazon.Textract;
 using Amazon.Textract.Model;
+using System.Text.Json;
 using TextractTest.Core.Models;
 
 namespace TextractTest.Core.Services;
@@ -16,7 +14,7 @@ public class TextractTableProcessor
         ["Reference"] = new[] { "Reference", "Reference No", "Ref No", "Transaction ID", "Trans ID", "Trans Ref" },
         ["Description"] = new[] { "Description", "Narration", "Transaction Description", "Details", "Particulars", "Description/Payee/Memo" },
         ["Value Date"] = new[] { "Value Date", "Val Date", "Settlement Date", "Create Date" },
-        ["Deposit"] = new[] { "Deposit", "Credit", "Credit Amount", "Amount (CR)", "Deposits" },
+        ["Deposit"] = new[] { "Deposit", "Credit", "Credit Amount", "Amount (CR)", "Deposits", "Lodgements" },
         ["Withdrawal"] = new[] { "Withdrawal", "Debit", "Debit Amount", "Amount (DR)", "Withdrawals" },
         ["Balance"] = new[] { "Balance", "Running Balance", "Closing Balance", "Current Balance" }
     };
@@ -143,7 +141,7 @@ public class TextractTableProcessor
         foreach (var header in headers)
         {
             var trimmedHeader = header.Trim();
-            if (possibleNames.Any(possible => 
+            if (possibleNames.Any(possible =>
                 trimmedHeader.Contains(possible, StringComparison.OrdinalIgnoreCase)))
             {
                 return trimmedHeader;
@@ -186,7 +184,7 @@ public class TextractTableProcessor
             Console.WriteLine($"\nDebug - Processing table with headers: {string.Join(", ", headers)}");
 
             // Check if this is a summary/account info table
-            if (headers.Any(cell => 
+            if (headers.Any(cell =>
                 cell.Contains("account", StringComparison.OrdinalIgnoreCase) ||
                 cell.Contains("currency", StringComparison.OrdinalIgnoreCase) ||
                 cell.Contains("balance:", StringComparison.OrdinalIgnoreCase) ||
@@ -195,18 +193,35 @@ public class TextractTableProcessor
                 cell.Contains("branch", StringComparison.OrdinalIgnoreCase)))
             {
                 Console.WriteLine("Found summary table");
-                foreach (var row in table.Rows)
-                {
-                    if (row.Count >= 2)
-                    {
-                        var key = row[0].Trim().TrimEnd(':');
-                        var value = row[1].Trim();
-                        if (!string.IsNullOrEmpty(key) && !string.IsNullOrEmpty(value))
-                        {
-                            result.Summary[key] = value;
-                        }
-                    }
-                }
+// Try standard row-based key-value
+if (table.Rows.All(r => r.Count == 2))
+{
+    foreach (var row in table.Rows)
+    {
+        var key = row[0].Trim().TrimEnd(':');
+        var value = row[1].Trim();
+        if (!string.IsNullOrEmpty(key) && !string.IsNullOrEmpty(value))
+        {
+            result.Summary[key] = value;
+        }
+    }
+}
+// Try 2-row key-over-value format (e.g., headers in first row, values in second)
+else if (table.Rows.Count == 2)
+{
+    var keys = table.Rows[0];
+    var values = table.Rows[1];
+    for (int i = 0; i < Math.Min(keys.Count, values.Count); i++)
+    {
+        var key = keys[i].Trim().TrimEnd(':');
+        var value = values[i].Trim();
+        if (!string.IsNullOrEmpty(key) && !string.IsNullOrEmpty(value))
+        {
+            result.Summary[key] = value;
+        }
+    }
+}
+
                 continue;
             }
 
@@ -250,23 +265,23 @@ public class TextractTableProcessor
         // Get the directory and filename parts
         var dir = Path.GetDirectoryName(outputFile);
         var originalFilename = Path.GetFileNameWithoutExtension(outputFile);
-        
+
         // Extract the job ID from the filename (assuming format: extraction_jobId-timestamp.json)
         var parts = originalFilename.Split('_');
         var jobId = parts.Length > 1 ? parts[1].Split('-')[0] : "unknown";
-        
+
         // Get the original file name from the bucket (it should be the first part before _)
         var bucketFileName = parts[0];
-        
+
         // Create new filename with format: bucketFileName_jobId-timestamp.json
         var timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
         var newFilename = $"{bucketFileName}_{jobId}-{timestamp}.json";
-        
+
         // Combine with Documents folder path
         var documentsPath = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
         var outputDir = Path.Combine(documentsPath, "TextractOutput");
         Directory.CreateDirectory(outputDir);
-        
+
         var newOutputFile = Path.Combine(outputDir, newFilename);
 
         var options = new JsonSerializerOptions { WriteIndented = true };
@@ -295,4 +310,4 @@ public class TableData
 {
     public int Page { get; set; }
     public List<List<string>> Rows { get; set; } = new();
-} 
+}

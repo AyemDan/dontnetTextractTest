@@ -48,4 +48,4 @@ public class StatementSummary
 
     [JsonPropertyName("totalTransactions")]
     public int TotalTransactions { get; set; }
-} 
+}

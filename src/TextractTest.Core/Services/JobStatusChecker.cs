@@ -32,7 +32,7 @@ public class JobStatusChecker
         while (attempts < maxAttempts)
         {
             var status = await CheckJobStatus(jobId);
-            
+
             switch (status)
             {
                 case "SUCCEEDED":
@@ -50,4 +50,4 @@ public class JobStatusChecker
 
         throw new Exception($"Job {jobId} did not complete within {maxAttempts * delaySeconds} seconds");
     }
-} 
+}

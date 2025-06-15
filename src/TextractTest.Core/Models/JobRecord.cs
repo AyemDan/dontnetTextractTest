@@ -1,5 +1,3 @@
-using System.Text.Json.Serialization;
-
 namespace TextractTest.Core.Models;
 
 public class JobRecord
@@ -9,4 +7,4 @@ public class JobRecord
     public string Status { get; set; } = string.Empty;
     public DateTime ProcessedDate { get; set; }
     public string OutputFile { get; set; } = string.Empty;
-} 
+}
