@@ -11,10 +11,10 @@ public class TextractTableProcessor
 
     private static readonly Dictionary<string, string[]> HeaderMappings = new()
     {
-        ["Date"] = new[] { "Date", "Transaction Date", "Value Date", "Tran Date", "Create Date" },
+        ["Date"] = new[] { "Date", "Transaction Date", "Value Date", "Tran Date", "Create Date", "Date Posted" },
         ["Reference"] = new[] { "Reference", "Reference No", "Ref No", "Transaction ID", "Trans ID", "Trans Ref" },
-        ["Description"] = new[] { "Description", "Narration", "Transaction Description", "Details", "Particulars", "Description/Payee/Memo" },
-        ["Value Date"] = new[] { "Value Date", "Val Date", "Settlement Date", "Create Date" },
+        ["Description"] = new[] { "Description", "Narration", "Transaction Description", "Details", "Particulars", "Description/Payee/Memo", "Payee", "Memo", "Transaction Details" },
+        ["ValueDate"] = new[] { "Value Date", "Val Date", "Settlement Date", "Create Date", "Effective Date", "Date Effective" },
         ["Credit"] = new[] { "Credit", "Deposit", "Credit Amount", "Amount (CR)", "Deposits", "Lodgements" },
         ["Debit"] = new[] { "Debit", "Withdrawal", "Debit Amount", "Amount (DR)", "Withdrawals" },
         ["Balance"] = new[] { "Balance", "Running Balance", "Closing Balance", "Current Balance" }
@@ -266,33 +266,57 @@ public class TextractTableProcessor
                 foreach (var row in transactionRows)
                 {
                     if (row.Count != headers.Count) continue;
-                    if (summaryRowIndicators.Contains(row[0].Trim())) continue;
-                    var transaction = new Transaction();
-                    for (int i = 0; i < headers.Count; i++)
+                    // --- If any cell matches a summary key, add to summary and skip as transaction ---
+                    int summaryKeyIdx = -1;
+                    for (int i = 0; i < row.Count; i++)
                     {
-                        var header = headers[i].Trim();
-                        // Find the property this header should map to
-                        string propertyName = null;
-                        foreach (var kvp in headerMappings)
+                        var normalizedCell = TextractTableProcessor.NormalizeKey(row[i].Trim());
+                        if (summaryRowIndicators.Contains(normalizedCell))
                         {
-                            if (kvp.Value.Any(variant => header.Equals(variant, StringComparison.OrdinalIgnoreCase)))
-                            {
-                                propertyName = kvp.Key;
-                                break;
-                            }
-                        }
-                        if (propertyName == null)
-                        {
-                            // Fallback: use header as property name
-                            propertyName = header.Replace(" ", "");
-                        }
-                        var prop = type.GetProperty(propertyName, System.Reflection.BindingFlags.IgnoreCase | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
-                        if (prop != null)
-                        {
-                            prop.SetValue(transaction, row[i]);
+                            summaryKeyIdx = i;
+                            break;
                         }
                     }
-                    result.Transactions.Add(transaction);
+                    if (summaryKeyIdx != -1)
+                    {
+                        // Find the next non-empty cell after the summary key cell
+                        string value = row.Skip(summaryKeyIdx + 1).FirstOrDefault(v => !string.IsNullOrWhiteSpace(v))?.Trim() ?? string.Empty;
+                        if (string.IsNullOrEmpty(value))
+                        {
+                            // Fallback: first non-empty cell before the summary key
+                            value = row.Take(summaryKeyIdx).Reverse().FirstOrDefault(v => !string.IsNullOrWhiteSpace(v))?.Trim() ?? string.Empty;
+                        }
+                        var key = row[summaryKeyIdx].TrimEnd(':', '.', ';');
+                        if (!string.IsNullOrEmpty(key) && !string.IsNullOrEmpty(value))
+                        {
+                            Console.WriteLine($"  -> Matched summary key in transaction row: '{key}' with value '{value}'");
+                            result.Summary[key] = value;
+                        }
+                        continue; // Ensure summary rows are never added as transactions
+                    }
+                    // Flexible transaction validation: require at least Date/ValueDate, Description, and Credit or Debit
+                    var transaction = new Transaction();
+                    bool hasDate = false, hasDescription = false, hasCreditOrDebit = false;
+                    foreach (var kvp in headerMap)
+                    {
+                        var property = type.GetProperty(kvp.Key);
+                        if (property != null && kvp.Value < row.Count)
+                        {
+                            var value = row[kvp.Value];
+                            property.SetValue(transaction, value);
+                            if (kvp.Key == "Date" || kvp.Key == "ValueDate")
+                                hasDate |= !string.IsNullOrWhiteSpace(value);
+                            if (kvp.Key == "Description")
+                                hasDescription |= !string.IsNullOrWhiteSpace(value);
+                            if (kvp.Key == "Credit" || kvp.Key == "Debit")
+                                hasCreditOrDebit |= !string.IsNullOrWhiteSpace(value);
+                        }
+                    }
+                    // Only add if valid transaction
+                    if (hasDate && hasDescription && hasCreditOrDebit)
+                    {
+                        result.Transactions.Add(transaction);
+                    }
                 }
             }
             else
@@ -381,5 +405,16 @@ public class TextractTableProcessor
                 }
             }
         }
+    }
+
+    public static string NormalizeKey(string key)
+    {
+        if (string.IsNullOrWhiteSpace(key)) return string.Empty;
+        var sb = new System.Text.StringBuilder();
+        foreach (var c in key)
+        {
+            if (!char.IsPunctuation(c) || c == '-') sb.Append(c); // keep hyphens
+        }
+        return sb.ToString().Trim().ToLowerInvariant();
     }
 }
