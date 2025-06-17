@@ -13,7 +13,7 @@
     "BucketName": "input-textract-bucket-ayemdanm",
     "Status": "SUCCEEDED",
     "CreatedAt": "2025-06-15T15:12:44.0922129Z",
-    "UpdatedAt": "2025-06-17T07:50:27.876545Z"
+    "UpdatedAt": "2025-06-17T09:07:19.1140605Z"
   },
   {
     "JobId": "076d7a13fa014be34e3481a79657dc2caf20d13457a8f3aa18a78e0b54e5729c",
@@ -21,7 +21,7 @@
     "BucketName": "input-textract-bucket-ayemdanm",
     "Status": "SUCCEEDED",
     "CreatedAt": "2025-06-15T16:28:57.3453366Z",
-    "UpdatedAt": "2025-06-17T07:50:35.6719868Z"
+    "UpdatedAt": "2025-06-17T09:10:02.0000448Z"
   },
   {
     "JobId": "0616bcd1a54b924364ac8146505c78041e0f047f6acdbf0f7b2766c488ec13d4",

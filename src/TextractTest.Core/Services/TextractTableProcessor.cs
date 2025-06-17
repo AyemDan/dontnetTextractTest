@@ -173,100 +173,154 @@ public class TextractTableProcessor
     public BankStatementData FormatBankStatementData(List<TableData> tables)
     {
         var result = new BankStatementData();
-
+        int tableIndex = 0;
+        // Define allowed summary keys
+        var allowedSummaryKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "Account Name", "Account No", "Account Number", "Acct No", "Customer Name",
+            "Currency", "Account Type", "For the Period of", "Period", "Address",
+            "Cleared Balance", "Available Balance", "UnCleared Balance", "Total Credit", "Total Debit",
+            "Branch", "Statement Period", "Opening Balance", "Closing Balance", "Bank Name",
+            // User requested additional/variant keys:
+            "Begin Balance", "Uncleared Effect", "Summary Statement for", "Begin Balance Date", "Title",
+            "NUBAN", "BVN", "Remark", "Balance BF"
+        };
+        // Prepare a set of summary row indicators (with and without colon)
+        var summaryRowIndicators = new HashSet<string>(allowedSummaryKeys.SelectMany(k => new[] { k, k + ":" }), StringComparer.OrdinalIgnoreCase);
+        // Flexible header mappings for transaction fields
+        var headerMappings = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
+        {
+            { "Description", new[] { "Description", "Narration", "Details", "Transaction Details" } },
+            { "Date", new[] { "Date", "Transaction Date", "Value Date" } },
+            { "Reference", new[] { "Reference", "Ref", "Ref No", "Reference No" } },
+            { "Credit", new[] { "Credit", "Deposit", "Cr" } },
+            { "Debit", new[] { "Debit", "Withdrawal", "Dr" } },
+            { "Balance", new[] { "Balance", "Running Balance" } },
+            // Add more as needed
+        };
         foreach (var table in tables)
         {
+            tableIndex++;
+            Console.WriteLine($"Table {tableIndex}: {table.Rows.Count} rows");
             if (table.Rows.Count == 0) continue;
 
             var headers = table.Rows[0].Select(h => h.Trim()).ToList();
             Console.WriteLine($"\nDebug - Processing table with headers: {string.Join(", ", headers)}");
 
             // Check if this is a summary/account info table
-            if (headers.Any(cell =>
+            bool isSummaryTable = headers.Any(cell =>
                 cell.Contains("account", StringComparison.OrdinalIgnoreCase) ||
                 cell.Contains("currency", StringComparison.OrdinalIgnoreCase) ||
                 cell.Contains("balance:", StringComparison.OrdinalIgnoreCase) ||
                 cell.Contains("period", StringComparison.OrdinalIgnoreCase) ||
                 cell.Contains("statement", StringComparison.OrdinalIgnoreCase) ||
-                cell.Contains("branch", StringComparison.OrdinalIgnoreCase)))
+                cell.Contains("branch", StringComparison.OrdinalIgnoreCase));
+
+            if (isSummaryTable)
             {
                 Console.WriteLine("Found summary table");
-            // Try standard row-based key-value
-            if (table.Rows.All(r => r.Count == 2))
-            {
-                foreach (var row in table.Rows)
+                // Try standard row-based key-value
+                if (table.Rows.All(r => r.Count == 2))
                 {
-                    var key = row[0].Trim().TrimEnd(':');
-                    var value = row[1].Trim();
-                    if (!string.IsNullOrEmpty(key) && !string.IsNullOrEmpty(value))
+                    foreach (var row in table.Rows)
                     {
-                        result.Summary[key] = value;
+                        var key = row[0].Trim().TrimEnd(':');
+                        var value = row[1].Trim();
+                        if (!string.IsNullOrEmpty(key) && !string.IsNullOrEmpty(value) && allowedSummaryKeys.Contains(key))
+                        {
+                            result.Summary[key] = value;
+                        }
                     }
                 }
-            }
-            // Try 2-row key-over-value format (e.g., headers in first row, values in second)
-            else if (table.Rows.Count == 2)
-            {
-                var keys = table.Rows[0];
-                var values = table.Rows[1];
-                for (int i = 0; i < Math.Min(keys.Count, values.Count); i++)
+                // Try 2-row key-over-value format (e.g., headers in first row, values in second)
+                else if (table.Rows.Count == 2)
                 {
-                    var key = keys[i].Trim().TrimEnd(':');
-                    var value = values[i].Trim();
-                    if (!string.IsNullOrEmpty(key) && !string.IsNullOrEmpty(value))
+                    var keys = table.Rows[0];
+                    var values = table.Rows[1];
+                    for (int i = 0; i < Math.Min(keys.Count, values.Count); i++)
                     {
-                        result.Summary[key] = value;
+                        var key = keys[i].Trim().TrimEnd(':');
+                        var value = values[i].Trim();
+                        if (!string.IsNullOrEmpty(key) && !string.IsNullOrEmpty(value) && allowedSummaryKeys.Contains(key))
+                        {
+                            result.Summary[key] = value;
+                        }
                     }
                 }
-            }
-
+                // If not a standard summary table, skip adding all cells as summary fields
                 continue;
             }
 
             // Try to identify if this is a transaction table
             var headerMap = MapHeaders(headers);
             Console.WriteLine($"Found {headerMap.Count} matching headers");
+            int transactionsBefore = result.Transactions.Count;
+            bool isTransactionTable = headerMap.Count >= 4;
 
-            if (headerMap.Count >= 4)
+            if (isTransactionTable)
             {
                 Console.WriteLine("Processing as transaction table");
-
                 var type = typeof(Transaction);
+                var transactionRows = table.Rows.Skip(1).ToList(); // Skip header row
 
-                foreach (var row in table.Rows.Skip(1)) // Skip header row
+                foreach (var row in transactionRows)
                 {
                     if (row.Count != headers.Count) continue;
-
+                    if (summaryRowIndicators.Contains(row[0].Trim())) continue;
                     var transaction = new Transaction();
-
-                    foreach (var standardHeader in HeaderMappings.Keys)
+                    for (int i = 0; i < headers.Count; i++)
                     {
-                        if (headerMap.TryGetValue(standardHeader, out int idx))
+                        var header = headers[i].Trim();
+                        // Find the property this header should map to
+                        string propertyName = null;
+                        foreach (var kvp in headerMappings)
                         {
-                            var value = idx < row.Count ? row[idx].Trim() : "";
-
-                            var prop = type.GetProperties()
-                                           .FirstOrDefault(p => string.Equals(p.Name, standardHeader, StringComparison.OrdinalIgnoreCase));
-
-                            if (prop != null && prop.CanWrite)
+                            if (kvp.Value.Any(variant => header.Equals(variant, StringComparison.OrdinalIgnoreCase)))
                             {
-                                prop.SetValue(transaction, value);
+                                propertyName = kvp.Key;
+                                break;
                             }
                         }
-                        else
+                        if (propertyName == null)
                         {
-                            var prop = type.GetProperties()
-                                           .FirstOrDefault(p => string.Equals(p.Name, standardHeader, StringComparison.OrdinalIgnoreCase));
-
-                            if (prop != null && prop.CanWrite)
-                            {
-                                prop.SetValue(transaction, "");
-                            }
+                            // Fallback: use header as property name
+                            propertyName = header.Replace(" ", "");
+                        }
+                        var prop = type.GetProperty(propertyName, System.Reflection.BindingFlags.IgnoreCase | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+                        if (prop != null)
+                        {
+                            prop.SetValue(transaction, row[i]);
                         }
                     }
-
+                    result.Transactions.Add(transaction);
+                }
+            }
+            else
+            {
+                // If not a summary or transaction table, treat as generic transaction table
+                Console.WriteLine($"Treating table {tableIndex} as generic transaction table");
+                var colCount = headers.Count;
+                foreach (var row in table.Rows.Skip(1)) // Skip header row
+                {
+                    if (row.Count != colCount) continue;
+                    // Skip rows that are summary-like (first cell matches summary key)
+                    var firstCell = row[0].Trim();
+                    if (summaryRowIndicators.Contains(firstCell)) continue;
+                    var transaction = new Transaction();
+                    // Map columns to known fields if possible
+                    for (int i = 0; i < row.Count; i++)
+                    {
+                        var value = row[i].Trim();
+                        if (i == 0) transaction.Date = value;
+                        else if (i == 1) transaction.Reference = value;
+                        else if (i == 2) transaction.Description = value;
+                        else if (i == 3) transaction.ValueDate = value;
+                        else if (i == 4) transaction.Credit = value;
+                        else if (i == 5) transaction.Debit = value;
+                        else if (i == 6) transaction.Balance = value;
+                    }
                     // Add only if there's at least one non-empty field
-                    if (type.GetProperties().Any(p =>
+                    if (typeof(Transaction).GetProperties().Any(p =>
                     {
                         var value = p.GetValue(transaction) as string;
                         return !string.IsNullOrWhiteSpace(value);
@@ -275,10 +329,10 @@ public class TextractTableProcessor
                         result.Transactions.Add(transaction);
                     }
                 }
+                int transactionsAfter = result.Transactions.Count;
+                Console.WriteLine($"Extracted {transactionsAfter - transactionsBefore} generic transactions from table {tableIndex}");
             }
-
         }
-
         return result;
     }
 
