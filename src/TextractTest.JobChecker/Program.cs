@@ -1,42 +1,6 @@
 ﻿using Amazon.Textract;
 using TextractTest.Core.Services;
 
-if (args.Length > 0 && args[0] == "--reparse")
-{
-    if (args.Length < 2)
-    {
-        Console.WriteLine("Usage: dotnet run -- --reparse <blocksFile> [outputFile]");
-        return;
-    }
-    var blocksFile = args[1];
-    var outputFile = args.Length > 2 ? args[2] : null;
-    var reparseTableProcessor = new TextractTableProcessor();
-    reparseTableProcessor.LoadBlocksFromFile(blocksFile);
-    var tables = reparseTableProcessor.ExtractTablesFromBlocks();
-    var bankData = reparseTableProcessor.FormatBankStatementData(tables);
-    if (string.IsNullOrEmpty(outputFile))
-    {
-        var documentsPath = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
-        var outputDir = Path.Combine(documentsPath, "TextractOutput");
-        Directory.CreateDirectory(outputDir);
-        var baseName = Path.GetFileNameWithoutExtension(blocksFile); // e.g. DocumentName_JobId_blocks
-        // Try to extract original file name and jobId
-        string originalFileName = baseName;
-        string jobIdFromFile = "reparsed";
-        var parts = baseName.Split('_');
-        if (parts.Length >= 2)
-        {
-            originalFileName = parts[0];
-            jobIdFromFile = parts[1];
-        }
-        var timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
-        outputFile = Path.Combine(outputDir, $"{originalFileName}_{jobIdFromFile}-{timestamp}.json");
-    }
-    reparseTableProcessor.SaveResults(bankData, outputFile);
-    Console.WriteLine($"Re-parsed and saved output to: {outputFile}");
-    return;
-}
-
 var jobId = args.Length > 0 ? args[0] : null;
 
 if (string.IsNullOrEmpty(jobId))
