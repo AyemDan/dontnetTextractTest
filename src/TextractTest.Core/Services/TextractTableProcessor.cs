@@ -8,23 +8,36 @@ namespace TextractTest.Core.Services;
 public class TextractTableProcessor
 {
     private List<Block> _blocks;
+    private List<(string Key, string Value)> _keyValuePairs = new();
 
-    private static readonly Dictionary<string, string[]> HeaderMappings = new()
+    private static readonly Dictionary<string, string[]> headerMappings = new(StringComparer.OrdinalIgnoreCase)
     {
-        ["Date"] = new[] { "Date", "Transaction Date", "Value Date", "Tran Date", "Create Date" },
+        ["Date"] = new[] { "Date", "Transaction Date", "Create Date", "Date Posted" },
+        ["ValueDate"] = new[] { "Value Date", "Val Date", "Settlement Date", "Effective Date" },
         ["Reference"] = new[] { "Reference", "Reference No", "Ref No", "Transaction ID", "Trans ID", "Trans Ref" },
-        ["Description"] = new[] { "Description", "Narration", "Transaction Description", "Details", "Particulars", "Description/Payee/Memo" },
-        ["Value Date"] = new[] { "Value Date", "Val Date", "Settlement Date", "Create Date" },
+        ["Description"] = new[] { "Description", "Narration", "Transaction Description", "Details", "Particulars", "Description/Payee/Memo", "Payee", "Memo", "Transaction Details" },
         ["Credit"] = new[] { "Credit", "Deposit", "Credit Amount", "Amount (CR)", "Deposits", "Lodgements" },
         ["Debit"] = new[] { "Debit", "Withdrawal", "Debit Amount", "Amount (DR)", "Withdrawals" },
-        ["Balance"] = new[] { "Balance", "Running Balance", "Closing Balance", "Current Balance" }
+        ["Balance"] = new[] { "Balance", "Running Balance" }
     };
+
+    private static string NormalizeKey(string key)
+    {
+        if (string.IsNullOrWhiteSpace(key)) return string.Empty;
+        var sb = new System.Text.StringBuilder();
+        foreach (var c in key)
+        {
+            if (!char.IsPunctuation(c) || c == '-') sb.Append(c); // keep hyphens
+        }
+        return sb.ToString().Trim().ToLowerInvariant();
+    }
+
     private Dictionary<string, int> MapHeaders(List<string> actualHeaders)
     {
         var headerMap = new Dictionary<string, int>();
         Console.WriteLine($"\nDebug - Found headers: {string.Join(", ", actualHeaders)}");
 
-        foreach (var mapping in HeaderMappings)
+        foreach (var mapping in headerMappings)
         {
             var standardHeader = mapping.Key;
             var possibleNames = mapping.Value;
@@ -61,21 +74,104 @@ public class TextractTableProcessor
 
     public async Task ExtractFromJobId(IAmazonTextract client, string jobId)
     {
+        // Determine cache file path
+        var jobCheckerDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory);
+        var cacheFile = Path.Combine(jobCheckerDir, $"{jobId}_blocks.json");
+
+        if (File.Exists(cacheFile))
+        {
+            Console.WriteLine($"Loading Textract blocks from cache: {cacheFile}");
+            var json = await File.ReadAllTextAsync(cacheFile);
+            _blocks = JsonSerializer.Deserialize<List<Amazon.Textract.Model.Block>>(json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            // Also extract key-value pairs from cached blocks
+            _keyValuePairs = ExtractKeyValuePairs(_blocks);
+            Console.WriteLine($"Loaded {_blocks.Count} blocks from cache");
+            return;
+        }
+
         var request = new GetDocumentAnalysisRequest { JobId = jobId };
         var response = await client.GetDocumentAnalysisAsync(request);
-
-        Console.WriteLine($"Pages processed: {response.DocumentMetadata.Pages}");
-
+        Console.WriteLine($"Pages reported by Textract: {response.DocumentMetadata.Pages}");
         _blocks.Clear();
         _blocks.AddRange(response.Blocks);
-
+        int pageCount = response.DocumentMetadata.Pages;
+        int totalBlocks = response.Blocks.Count;
+        int batch = 1;
         while (response.NextToken != null)
         {
-            Console.WriteLine($"Processing next batch with {response.Blocks.Count} blocks");
+            Console.WriteLine($"Processing next batch {batch} with {response.Blocks.Count} blocks");
             request.NextToken = response.NextToken;
             response = await client.GetDocumentAnalysisAsync(request);
             _blocks.AddRange(response.Blocks);
+            batch++;
         }
+        // Save blocks to cache
+        var blocksJson = JsonSerializer.Serialize(_blocks);
+        await File.WriteAllTextAsync(cacheFile, blocksJson);
+        Console.WriteLine($"Saved Textract blocks to cache: {cacheFile}");
+        // Extract key-value pairs from blocks
+        _keyValuePairs = ExtractKeyValuePairs(_blocks);
+        Console.WriteLine($"Extracted {_keyValuePairs.Count} key-value pairs from KEY_VALUE_SET blocks");
+    }
+
+    private List<(string Key, string Value)> ExtractKeyValuePairs(List<Block> blocks)
+    {
+        var keyMap = new Dictionary<string, Block>();
+        var valueMap = new Dictionary<string, Block>();
+        var blockMap = blocks.ToDictionary(b => b.Id, b => b);
+        foreach (var block in blocks)
+        {
+            if (block.BlockType == "KEY_VALUE_SET")
+            {
+                if (block.EntityTypes.Contains("KEY"))
+                    keyMap[block.Id] = block;
+                else if (block.EntityTypes.Contains("VALUE"))
+                    valueMap[block.Id] = block;
+            }
+        }
+        var keyValuePairs = new List<(string Key, string Value)>();
+        foreach (var keyBlock in keyMap.Values)
+        {
+            string keyText = GetTextForBlock(keyBlock, blockMap);
+            string valueText = string.Empty;
+            var valueIds = keyBlock.Relationships?.Where(r => r.Type == "VALUE").SelectMany(r => r.Ids) ?? Enumerable.Empty<string>();
+            foreach (var valueId in valueIds)
+            {
+                if (valueMap.TryGetValue(valueId, out var valueBlock))
+                {
+                    valueText = GetTextForBlock(valueBlock, blockMap);
+                }
+            }
+            if (!string.IsNullOrWhiteSpace(keyText))
+                keyValuePairs.Add((keyText, valueText));
+        }
+        return keyValuePairs;
+    }
+
+    private string GetTextForBlock(Block block, Dictionary<string, Block> blockMap)
+    {
+        var text = new System.Text.StringBuilder();
+        if (block.Relationships != null)
+        {
+            foreach (var rel in block.Relationships)
+            {
+                if (rel.Type == "CHILD")
+                {
+                    foreach (var id in rel.Ids)
+                    {
+                        if (blockMap.TryGetValue(id, out var childBlock))
+                        {
+                            if (childBlock.BlockType == "WORD" || childBlock.BlockType == "SELECTION_ELEMENT")
+                            {
+                                text.Append(childBlock.Text);
+                                text.Append(" ");
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return text.ToString().Trim();
     }
 
     public List<TableData> ExtractTablesFromBlocks()
@@ -185,19 +281,11 @@ public class TextractTableProcessor
             "Begin Balance", "Uncleared Effect", "Summary Statement for", "Begin Balance Date", "Title",
             "NUBAN", "BVN", "Remark", "Balance BF"
         };
+        // Prepare a normalized set of allowed summary keys
+        var normalizedSummaryKeys = new HashSet<string>(allowedSummaryKeys.Select(NormalizeKey));
+        Console.WriteLine($"Normalized summary keys: {string.Join(", ", normalizedSummaryKeys)}");
         // Prepare a set of summary row indicators (with and without colon)
         var summaryRowIndicators = new HashSet<string>(allowedSummaryKeys.SelectMany(k => new[] { k, k + ":" }), StringComparer.OrdinalIgnoreCase);
-        // Flexible header mappings for transaction fields
-        var headerMappings = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
-        {
-            { "Description", new[] { "Description", "Narration", "Details", "Transaction Details" } },
-            { "Date", new[] { "Date", "Transaction Date", "Value Date" } },
-            { "Reference", new[] { "Reference", "Ref", "Ref No", "Reference No" } },
-            { "Credit", new[] { "Credit", "Deposit", "Cr" } },
-            { "Debit", new[] { "Debit", "Withdrawal", "Dr" } },
-            { "Balance", new[] { "Balance", "Running Balance" } },
-            // Add more as needed
-        };
         foreach (var table in tables)
         {
             tableIndex++;
@@ -206,6 +294,28 @@ public class TextractTableProcessor
 
             var headers = table.Rows[0].Select(h => h.Trim()).ToList();
             Console.WriteLine($"\nDebug - Processing table with headers: {string.Join(", ", headers)}");
+
+            // --- Universal summary key-value extraction from all tables ---
+            foreach (var row in table.Rows)
+            {
+                if (row.Count == 2)
+                {
+                    var key = row[0].Trim();
+                    var value = row[1].Trim();
+                    var normalizedKey = NormalizeKey(key);
+                    Console.WriteLine($"Checking key: '{key}' (normalized: '{normalizedKey}')");
+                    if (!string.IsNullOrEmpty(key) && !string.IsNullOrEmpty(value) && normalizedSummaryKeys.Contains(normalizedKey))
+                    {
+                        Console.WriteLine($"  -> Matched summary key: '{key}'");
+                        result.Summary[key.TrimEnd(':', '.', ';')] = value;
+                    }
+                    else
+                    {
+                        Console.WriteLine($"  -> Not a summary key");
+                    }
+                }
+            }
+            // --- End universal summary extraction ---
 
             // Check if this is a summary/account info table
             bool isSummaryTable = headers.Any(cell =>
@@ -263,33 +373,63 @@ public class TextractTableProcessor
                 var type = typeof(Transaction);
                 var transactionRows = table.Rows.Skip(1).ToList(); // Skip header row
 
+                // Build a header index map for flexible mapping
+                var headerIndexMap = new Dictionary<string, int>();
+                for (int i = 0; i < headers.Count; i++)
+                {
+                    foreach (var kvp in headerMappings)
+                    {
+                        if (kvp.Value.Any(h => string.Equals(headers[i], h, StringComparison.OrdinalIgnoreCase)))
+                        {
+                            headerIndexMap[kvp.Key] = i;
+                            break;
+                        }
+                    }
+                }
+
                 foreach (var row in transactionRows)
                 {
                     if (row.Count != headers.Count) continue;
-                    if (summaryRowIndicators.Contains(row[0].Trim())) continue;
-                    var transaction = new Transaction();
-                    for (int i = 0; i < headers.Count; i++)
+                    // --- If any cell matches a summary key, add to summary and skip as transaction ---
+                    int summaryKeyIdx = -1;
+                    for (int i = 0; i < row.Count; i++)
                     {
-                        var header = headers[i].Trim();
-                        // Find the property this header should map to
-                        string propertyName = null;
-                        foreach (var kvp in headerMappings)
+                        var normalizedCell = NormalizeKey(row[i].Trim());
+                        if (normalizedSummaryKeys.Contains(normalizedCell))
                         {
-                            if (kvp.Value.Any(variant => header.Equals(variant, StringComparison.OrdinalIgnoreCase)))
-                            {
-                                propertyName = kvp.Key;
-                                break;
-                            }
+                            summaryKeyIdx = i;
+                            break;
                         }
-                        if (propertyName == null)
+                    }
+                    if (summaryKeyIdx != -1)
+                    {
+                        // Find the next non-empty cell after the summary key cell
+                        string value = row.Skip(summaryKeyIdx + 1).FirstOrDefault(v => !string.IsNullOrWhiteSpace(v))?.Trim() ?? string.Empty;
+                        if (string.IsNullOrEmpty(value))
                         {
-                            // Fallback: use header as property name
-                            propertyName = header.Replace(" ", "");
+                            // Fallback: first non-empty cell before the summary key
+                            value = row.Take(summaryKeyIdx).Reverse().FirstOrDefault(v => !string.IsNullOrWhiteSpace(v))?.Trim() ?? string.Empty;
                         }
-                        var prop = type.GetProperty(propertyName, System.Reflection.BindingFlags.IgnoreCase | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
-                        if (prop != null)
+                        var key = row[summaryKeyIdx].TrimEnd(':', '.', ';');
+                        if (!string.IsNullOrEmpty(key) && !string.IsNullOrEmpty(value))
                         {
-                            prop.SetValue(transaction, row[i]);
+                            Console.WriteLine($"  -> Matched summary key in transaction row: '{key}' with value '{value}'");
+                            result.Summary[key] = value;
+                        }
+                        continue; // Ensure summary rows are never added as transactions
+                    }
+                    // Only add as transaction if all required headers are present in headerIndexMap
+                    var requiredHeaders = new[] { "Date", "Reference", "Description", "ValueDate", "Credit", "Debit", "Balance" };
+                    bool hasAllRequiredHeaders = requiredHeaders.All(h => headerIndexMap.ContainsKey(h));
+                    if (!hasAllRequiredHeaders) continue;
+                    var transaction = new Transaction();
+                    // Assign values using only the headers present in this table
+                    foreach (var kvp in headerIndexMap)
+                    {
+                        var property = type.GetProperty(kvp.Key);
+                        if (property != null && kvp.Value < row.Count)
+                        {
+                            property.SetValue(transaction, row[kvp.Value]);
                         }
                     }
                     result.Transactions.Add(transaction);
@@ -303,9 +443,22 @@ public class TextractTableProcessor
                 foreach (var row in table.Rows.Skip(1)) // Skip header row
                 {
                     if (row.Count != colCount) continue;
-                    // Skip rows that are summary-like (first cell matches summary key)
+                    // --- If row starts with summary key, add to summary and skip as transaction ---
                     var firstCell = row[0].Trim();
-                    if (summaryRowIndicators.Contains(firstCell)) continue;
+                    var normalizedFirstCell = NormalizeKey(firstCell);
+                    Console.WriteLine($"Checking generic transaction row first cell: '{firstCell}' (normalized: '{normalizedFirstCell}')");
+                    if (normalizedSummaryKeys.Contains(normalizedFirstCell) && row.Count >= 2)
+                    {
+                        var value = row[1].Trim();
+                        if (!string.IsNullOrEmpty(value))
+                        {
+                            Console.WriteLine($"  -> Matched summary key in generic transaction row: '{firstCell}'");
+                            result.Summary[firstCell.TrimEnd(':', '.', ';')] = value;
+                        }
+                        continue;
+                    }
+                    // Skip rows that are summary-like (first cell matches summary key)
+                    if (summaryRowIndicators.Contains(row[0].Trim())) continue;
                     var transaction = new Transaction();
                     // Map columns to known fields if possible
                     for (int i = 0; i < row.Count; i++)
@@ -331,6 +484,21 @@ public class TextractTableProcessor
                 }
                 int transactionsAfter = result.Transactions.Count;
                 Console.WriteLine($"Extracted {transactionsAfter - transactionsBefore} generic transactions from table {tableIndex}");
+            }
+        }
+        // After processing tables, process key-value pairs for summary
+        foreach (var (key, value) in _keyValuePairs)
+        {
+            var normalizedKey = NormalizeKey(key);
+            Console.WriteLine($"Checking key-value pair: '{key}' (normalized: '{normalizedKey}')");
+            if (!string.IsNullOrEmpty(key) && !string.IsNullOrEmpty(value) && normalizedSummaryKeys.Contains(normalizedKey))
+            {
+                Console.WriteLine($"  -> Matched summary key from key-value pair: '{key}'");
+                result.Summary[key.TrimEnd(':', '.', ';')] = value;
+            }
+            else
+            {
+                Console.WriteLine($"  -> Not a summary key from key-value pair");
             }
         }
         return result;
@@ -381,5 +549,13 @@ public class TextractTableProcessor
                 }
             }
         }
+    }
+
+    public void LoadBlocksFromFile(string filePath)
+    {
+        var json = File.ReadAllText(filePath);
+        _blocks = JsonSerializer.Deserialize<List<Amazon.Textract.Model.Block>>(json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+        _keyValuePairs = ExtractKeyValuePairs(_blocks);
+        Console.WriteLine($"Loaded {_blocks.Count} blocks from file: {filePath}");
     }
 }
