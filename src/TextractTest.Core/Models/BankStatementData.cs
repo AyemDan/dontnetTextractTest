@@ -8,7 +8,7 @@ public class BankStatementData
     public Dictionary<string, string> Summary { get; set; } = new();
 
     [JsonPropertyName("transactions")]
-    public List<Dictionary<string, string>> Transactions { get; set; } = new();
+    public List<Transaction> Transactions { get; set; } = new();
 }
 
 public class AccountInfo
@@ -48,4 +48,34 @@ public class StatementSummary
 
     [JsonPropertyName("totalTransactions")]
     public int TotalTransactions { get; set; }
+}
+
+public class Transaction
+{
+    [JsonPropertyName("Date")]
+    public string Date { get; set; } = string.Empty;
+
+    [JsonPropertyName("Reference")]
+    public string Reference { get; set; } = string.Empty;
+
+    [JsonPropertyName("Description")]
+    public string Description { get; set; } = string.Empty;
+
+    [JsonPropertyName("Value Date")]
+    public string ValueDate { get; set; } = string.Empty;
+
+    [JsonPropertyName("Credit")]
+    public string Credit { get; set; } = string.Empty;
+
+    [JsonPropertyName("Debit")]
+    public string Debit { get; set; } = string.Empty;
+
+    [JsonPropertyName("Balance")]
+    public string Balance { get; set; } = string.Empty;
+}
+
+public class Table
+{
+    public List<List<string>> Rows { get; set; } = new();
+    public int Page { get; set; }
 }

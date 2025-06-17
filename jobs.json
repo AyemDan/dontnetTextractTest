@@ -35,9 +35,9 @@
     "JobId": "3f8f135d9c820404927c3b1e6531c2f0087bfc5d772158366c0148e8c2d0d34d",
     "DocumentName": "ABREX (1).pdf",
     "BucketName": "input-textract-bucket-ayemdanm",
-    "Status": "SUBMITTED",
+    "Status": "SUCCEEDED",
     "CreatedAt": "2025-06-15T16:36:15.1955593Z",
-    "UpdatedAt": null
+    "UpdatedAt": "2025-06-16T14:41:33.1468645Z"
   },
   {
     "JobId": "0616bcd1a54b924364ac8146505c78041e0f047f6acdbf0f7b2766c488ec13d4",
@@ -109,6 +109,14 @@
     "BucketName": "input-textract-bucket-ayemdanm",
     "Status": "SUBMITTED",
     "CreatedAt": "2025-06-15T17:28:57.5628726Z",
+    "UpdatedAt": null
+  },
+  {
+    "JobId": "b6a922b712be17f7d6652436c8ae7b57163daae46fb8580026f1430981a3f415",
+    "DocumentName": "ABREX (1).pdf",
+    "BucketName": "input-textract-bucket-ayemdanm",
+    "Status": "SUBMITTED",
+    "CreatedAt": "2025-06-16T14:03:49.5798207Z",
     "UpdatedAt": null
   }
 ]

@@ -1,4 +1,4 @@
-using Amazon.Textract;
+﻿using Amazon.Textract;
 using Amazon.Textract.Model;
 using System.Text.Json;
 using TextractTest.Core.Models;
@@ -8,31 +8,50 @@ namespace TextractTest.Core.Services;
 public class TextractTableProcessor
 {
     private List<Block> _blocks;
+
     private static readonly Dictionary<string, string[]> HeaderMappings = new()
     {
         ["Date"] = new[] { "Date", "Transaction Date", "Value Date", "Tran Date", "Create Date" },
         ["Reference"] = new[] { "Reference", "Reference No", "Ref No", "Transaction ID", "Trans ID", "Trans Ref" },
         ["Description"] = new[] { "Description", "Narration", "Transaction Description", "Details", "Particulars", "Description/Payee/Memo" },
         ["Value Date"] = new[] { "Value Date", "Val Date", "Settlement Date", "Create Date" },
-        ["Deposit"] = new[] { "Deposit", "Credit", "Credit Amount", "Amount (CR)", "Deposits", "Lodgements" },
-        ["Withdrawal"] = new[] { "Withdrawal", "Debit", "Debit Amount", "Amount (DR)", "Withdrawals" },
+        ["Credit"] = new[] { "Credit", "Deposit", "Credit Amount", "Amount (CR)", "Deposits", "Lodgements" },
+        ["Debit"] = new[] { "Debit", "Withdrawal", "Debit Amount", "Amount (DR)", "Withdrawals" },
         ["Balance"] = new[] { "Balance", "Running Balance", "Closing Balance", "Current Balance" }
     };
-
-    private static readonly Dictionary<string, string[]> AccountInfoMappings = new()
+    private Dictionary<string, int> MapHeaders(List<string> actualHeaders)
     {
-        ["AccountNumber"] = new[] { "Account Number", "A/C No", "Account No", "Account No." },
-        ["AccountName"] = new[] { "Account Name", "Customer Name", "Name", "Account Title" },
-        ["BankName"] = new[] { "Bank Name", "Bank", "Issuing Bank" },
-        ["Currency"] = new[] { "Currency", "CCY", "Currency Code" },
-        ["Branch"] = new[] { "Branch", "Branch Name", "Branch Code" }
-    };
+        var headerMap = new Dictionary<string, int>();
+        Console.WriteLine($"\nDebug - Found headers: {string.Join(", ", actualHeaders)}");
 
-    public class Table
+        foreach (var mapping in HeaderMappings)
+        {
+            var standardHeader = mapping.Key;
+            var possibleNames = mapping.Value;
+            var matchedHeader = FindMatchingHeader(actualHeaders, possibleNames);
+
+            if (matchedHeader != null)
+            {
+                var index = actualHeaders.IndexOf(matchedHeader);
+                headerMap[standardHeader] = index;
+                Console.WriteLine($"Mapped '{matchedHeader}' to '{standardHeader}'");
+            }
+        }
+
+        return headerMap;
+    }
+    private string? FindMatchingHeader(List<string> headers, string[] possibleNames)
     {
-        public List<List<string>> Cells { get; set; } = new();
-        public int RowCount => Cells.Count;
-        public int ColumnCount => Cells.Any() ? Cells[0].Count : 0;
+        foreach (var header in headers)
+        {
+            var trimmedHeader = header.Trim();
+            if (possibleNames.Any(possible =>
+                trimmedHeader.Contains(possible, StringComparison.OrdinalIgnoreCase)))
+            {
+                return trimmedHeader;
+            }
+        }
+        return null;
     }
 
     public TextractTableProcessor()
@@ -52,7 +71,7 @@ public class TextractTableProcessor
 
         while (response.NextToken != null)
         {
-            Console.WriteLine($"Processing page {response.Blocks.Count} blocks");
+            Console.WriteLine($"Processing next batch with {response.Blocks.Count} blocks");
             request.NextToken = response.NextToken;
             response = await client.GetDocumentAnalysisAsync(request);
             _blocks.AddRange(response.Blocks);
@@ -68,22 +87,25 @@ public class TextractTableProcessor
         {
             if (block.BlockType == BlockType.TABLE)
             {
+                // Add the previous table (if any) before starting a new one
                 if (currentTable != null)
                 {
                     tables.Add(currentTable);
                 }
+
                 currentTable = new TableData
                 {
                     Page = block.Page,
                     Rows = new List<List<string>>()
                 };
+
+                Console.WriteLine($"Found table on page {block.Page}");
             }
             else if (block.BlockType == BlockType.CELL && currentTable != null)
             {
                 // Get cell text
                 var text = GetCellText(block);
 
-                // Add cell to table
                 var rowIndex = block.RowIndex - 1;
                 var colIndex = block.ColumnIndex - 1;
 
@@ -99,15 +121,26 @@ public class TextractTableProcessor
                     currentTable.Rows[rowIndex].Add(string.Empty);
                 }
 
-                // Add cell text
+                // Set cell value
                 currentTable.Rows[rowIndex][colIndex] = text.Trim();
             }
         }
 
-        // Add last table if exists
+        // ✅ Add the last table after loop ends
         if (currentTable != null)
         {
             tables.Add(currentTable);
+        }
+
+        Console.WriteLine($"Extracted {tables.Count} tables from {_blocks.Count(b => b.BlockType == BlockType.TABLE)} TABLE blocks");
+
+        // Optional: Show how many tables were found per page
+        var tablesByPage = tables.GroupBy(t => t.Page)
+                                 .ToDictionary(g => g.Key, g => g.Count());
+
+        foreach (var page in tablesByPage.OrderBy(p => p.Key))
+        {
+            Console.WriteLine($"Page {page.Key}: {page.Value} tables");
         }
 
         return tables;
@@ -136,41 +169,6 @@ public class TextractTableProcessor
         return string.Join(" ", text);
     }
 
-    private string? FindMatchingHeader(List<string> headers, string[] possibleNames)
-    {
-        foreach (var header in headers)
-        {
-            var trimmedHeader = header.Trim();
-            if (possibleNames.Any(possible =>
-                trimmedHeader.Contains(possible, StringComparison.OrdinalIgnoreCase)))
-            {
-                return trimmedHeader;
-            }
-        }
-        return null;
-    }
-
-    private Dictionary<string, int> MapHeaders(List<string> actualHeaders)
-    {
-        var headerMap = new Dictionary<string, int>();
-        Console.WriteLine($"\nDebug - Found headers: {string.Join(", ", actualHeaders)}");
-
-        foreach (var mapping in HeaderMappings)
-        {
-            var standardHeader = mapping.Key;
-            var possibleNames = mapping.Value;
-            var matchedHeader = FindMatchingHeader(actualHeaders, possibleNames);
-
-            if (matchedHeader != null)
-            {
-                var index = actualHeaders.IndexOf(matchedHeader);
-                headerMap[standardHeader] = index;
-                Console.WriteLine($"Mapped '{matchedHeader}' to '{standardHeader}'");
-            }
-        }
-
-        return headerMap;
-    }
 
     public BankStatementData FormatBankStatementData(List<TableData> tables)
     {
@@ -193,34 +191,34 @@ public class TextractTableProcessor
                 cell.Contains("branch", StringComparison.OrdinalIgnoreCase)))
             {
                 Console.WriteLine("Found summary table");
-// Try standard row-based key-value
-if (table.Rows.All(r => r.Count == 2))
-{
-    foreach (var row in table.Rows)
-    {
-        var key = row[0].Trim().TrimEnd(':');
-        var value = row[1].Trim();
-        if (!string.IsNullOrEmpty(key) && !string.IsNullOrEmpty(value))
-        {
-            result.Summary[key] = value;
-        }
-    }
-}
-// Try 2-row key-over-value format (e.g., headers in first row, values in second)
-else if (table.Rows.Count == 2)
-{
-    var keys = table.Rows[0];
-    var values = table.Rows[1];
-    for (int i = 0; i < Math.Min(keys.Count, values.Count); i++)
-    {
-        var key = keys[i].Trim().TrimEnd(':');
-        var value = values[i].Trim();
-        if (!string.IsNullOrEmpty(key) && !string.IsNullOrEmpty(value))
-        {
-            result.Summary[key] = value;
-        }
-    }
-}
+            // Try standard row-based key-value
+            if (table.Rows.All(r => r.Count == 2))
+            {
+                foreach (var row in table.Rows)
+                {
+                    var key = row[0].Trim().TrimEnd(':');
+                    var value = row[1].Trim();
+                    if (!string.IsNullOrEmpty(key) && !string.IsNullOrEmpty(value))
+                    {
+                        result.Summary[key] = value;
+                    }
+                }
+            }
+            // Try 2-row key-over-value format (e.g., headers in first row, values in second)
+            else if (table.Rows.Count == 2)
+            {
+                var keys = table.Rows[0];
+                var values = table.Rows[1];
+                for (int i = 0; i < Math.Min(keys.Count, values.Count); i++)
+                {
+                    var key = keys[i].Trim().TrimEnd(':');
+                    var value = values[i].Trim();
+                    if (!string.IsNullOrEmpty(key) && !string.IsNullOrEmpty(value))
+                    {
+                        result.Summary[key] = value;
+                    }
+                }
+            }
 
                 continue;
             }
@@ -232,29 +230,53 @@ else if (table.Rows.Count == 2)
             if (headerMap.Count >= 4)
             {
                 Console.WriteLine("Processing as transaction table");
-                foreach (var row in table.Rows.Skip(1))  // Skip header row
+
+                var type = typeof(Transaction);
+
+                foreach (var row in table.Rows.Skip(1)) // Skip header row
                 {
                     if (row.Count != headers.Count) continue;
 
-                    var transaction = new Dictionary<string, string>();
+                    var transaction = new Transaction();
+
                     foreach (var standardHeader in HeaderMappings.Keys)
                     {
                         if (headerMap.TryGetValue(standardHeader, out int idx))
                         {
-                            transaction[standardHeader] = idx < row.Count ? row[idx].Trim() : "";
+                            var value = idx < row.Count ? row[idx].Trim() : "";
+
+                            var prop = type.GetProperties()
+                                           .FirstOrDefault(p => string.Equals(p.Name, standardHeader, StringComparison.OrdinalIgnoreCase));
+
+                            if (prop != null && prop.CanWrite)
+                            {
+                                prop.SetValue(transaction, value);
+                            }
                         }
                         else
                         {
-                            transaction[standardHeader] = "";
+                            var prop = type.GetProperties()
+                                           .FirstOrDefault(p => string.Equals(p.Name, standardHeader, StringComparison.OrdinalIgnoreCase));
+
+                            if (prop != null && prop.CanWrite)
+                            {
+                                prop.SetValue(transaction, "");
+                            }
                         }
                     }
 
-                    if (transaction.Values.Any(v => !string.IsNullOrEmpty(v)))
+                    // Add only if there's at least one non-empty field
+                    if (type.GetProperties().Any(p =>
+                    {
+                        var value = p.GetValue(transaction) as string;
+                        return !string.IsNullOrWhiteSpace(value);
+                    }))
                     {
                         result.Transactions.Add(transaction);
                     }
                 }
             }
+
         }
 
         return result;
@@ -295,19 +317,15 @@ else if (table.Rows.Count == 2)
         if (data.Transactions.Any())
         {
             Console.WriteLine("\nFields found in transactions:");
-            foreach (var kvp in data.Transactions[0])
+            var firstTransaction = data.Transactions[0];
+            foreach (var property in firstTransaction.GetType().GetProperties())
             {
-                if (!string.IsNullOrEmpty(kvp.Value))
+                var value = property.GetValue(firstTransaction) as string;
+                if (!string.IsNullOrEmpty(value))
                 {
-                    Console.WriteLine($"- {kvp.Key}");
+                    Console.WriteLine($"- {property.Name}: {value}");
                 }
             }
         }
     }
-}
-
-public class TableData
-{
-    public int Page { get; set; }
-    public List<List<string>> Rows { get; set; } = new();
 }
