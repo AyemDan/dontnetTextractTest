@@ -14,6 +14,30 @@ var jobTracker = new JobTracker();
 var jobStatusChecker = new JobStatusChecker(textractClient);
 var tableProcessor = new TextractTableProcessor();
 
+var parseBlocksArgIndex = Array.IndexOf(args, "--parse-blocks");
+if (parseBlocksArgIndex >= 0 && args.Length > parseBlocksArgIndex + 1)
+{
+    var blocksFile = args[parseBlocksArgIndex + 1];
+    var outputArgIndex = Array.IndexOf(args, "--output");
+    string outputFile = null;
+    if (outputArgIndex >= 0 && args.Length > outputArgIndex + 1)
+    {
+        outputFile = args[outputArgIndex + 1];
+    }
+    else
+    {
+        // Default output file in TextractOutput/parsed/
+        var documentsPath = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+        var outputDir = Path.Combine(documentsPath, "TextractOutput", "parsed");
+        Directory.CreateDirectory(outputDir);
+        var baseName = Path.GetFileNameWithoutExtension(blocksFile);
+        outputFile = Path.Combine(outputDir, baseName + "_parsed.json");
+    }
+    tableProcessor.ParseBlocksFile(blocksFile, outputFile);
+    Console.WriteLine($"Parsed output saved to: {outputFile}");
+    return;
+}
+
 try
 {
     // Get job info
@@ -53,7 +77,7 @@ try
         Console.WriteLine("Job completed successfully. Processing results...");
 
         // Extract tables from the document
-        await tableProcessor.ExtractFromJobId(textractClient, jobId);
+        await tableProcessor.ExtractFromJobId(textractClient, jobId, job.DocumentName);
         var tables = tableProcessor.ExtractTablesFromBlocks();
 
         // Format the data

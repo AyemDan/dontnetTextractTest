@@ -59,16 +59,36 @@ public class TextractTableProcessor
         _blocks = new List<Block>();
     }
 
-    public async Task ExtractFromJobId(IAmazonTextract client, string jobId)
+    public async Task ExtractFromJobId(IAmazonTextract client, string jobId, string documentName = null)
     {
+        // Determine cache file path
+        var documentsPath = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+        var outputDir = Path.Combine(documentsPath, "TextractOutput");
+        var blocksDir = Path.Combine(outputDir, "blocks");
+        Directory.CreateDirectory(blocksDir);
+        string cacheFile;
+        if (!string.IsNullOrEmpty(documentName))
+        {
+            cacheFile = Path.Combine(blocksDir, $"{documentName}_{jobId}_blocks.json");
+        }
+        else
+        {
+            cacheFile = Path.Combine(blocksDir, $"{jobId}_blocks.json");
+        }
+
+        if (File.Exists(cacheFile))
+        {
+            Console.WriteLine($"Loading Textract blocks from cache: {cacheFile}");
+            var json = await File.ReadAllTextAsync(cacheFile);
+            _blocks = JsonSerializer.Deserialize<List<Amazon.Textract.Model.Block>>(json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            return;
+        }
+
         var request = new GetDocumentAnalysisRequest { JobId = jobId };
         var response = await client.GetDocumentAnalysisAsync(request);
-
         Console.WriteLine($"Pages processed: {response.DocumentMetadata.Pages}");
-
         _blocks.Clear();
         _blocks.AddRange(response.Blocks);
-
         while (response.NextToken != null)
         {
             Console.WriteLine($"Processing next batch with {response.Blocks.Count} blocks");
@@ -76,6 +96,25 @@ public class TextractTableProcessor
             response = await client.GetDocumentAnalysisAsync(request);
             _blocks.AddRange(response.Blocks);
         }
+        // Save blocks to cache
+        var blocksJson = JsonSerializer.Serialize(_blocks);
+        await File.WriteAllTextAsync(cacheFile, blocksJson);
+        Console.WriteLine($"Saved Textract blocks to cache: {cacheFile}");
+    }
+
+    public void LoadBlocksFromFile(string filePath)
+    {
+        var json = File.ReadAllText(filePath);
+        _blocks = JsonSerializer.Deserialize<List<Amazon.Textract.Model.Block>>(json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+        Console.WriteLine($"Loaded {_blocks.Count} blocks from file: {filePath}");
+    }
+
+    public void ParseBlocksFile(string blocksFilePath, string outputFilePath)
+    {
+        LoadBlocksFromFile(blocksFilePath);
+        var tables = ExtractTablesFromBlocks();
+        var bankData = FormatBankStatementData(tables);
+        SaveResults(bankData, outputFilePath);
     }
 
     public List<TableData> ExtractTablesFromBlocks()
